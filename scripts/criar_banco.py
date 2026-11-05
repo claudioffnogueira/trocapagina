@@ -3,14 +3,15 @@ TrocaPágina - criação do banco de dados no MongoDB Atlas.
 
 O script:
   1. conecta ao cluster usando a variável de ambiente MONGODB_URI;
-  2. cria o banco "trocapagina" e as coleções "usuarios", "livros" e "interesses",
-     cada uma com validação de esquema ($jsonSchema);
+  2. cria o banco "trocapagina" e as coleções "usuarios" e "livros", cada uma com
+     validação de esquema ($jsonSchema). Os interesses dos usuários em livros
+     ficam EMBUTIDOS no documento do usuário (array "interesses");
   3. cria os índices necessários;
   4. insere documentos de exemplo (somente se a coleção estiver vazia).
 
 Uso:
     python scripts/criar_banco.py            # cria/atualiza e popula, sem apagar nada
-    python scripts/criar_banco.py --reset    # apaga as 3 coleções e recria tudo
+    python scripts/criar_banco.py --reset    # apaga as coleções e recria tudo
 """
 import argparse
 import os
@@ -42,6 +43,23 @@ SCHEMA_USUARIOS = {
         "estado": {"bsonType": "string", "minLength": 2, "maxLength": 2},
         "dataCadastro": {"bsonType": "date"},
         "ativo": {"bsonType": "bool"},
+        # Interesses do usuário em livros (embutidos no próprio usuário)
+        "interesses": {
+            "bsonType": "array",
+            "items": {
+                "bsonType": "object",
+                "required": [
+                    "livroId", "modalidadeDesejada", "status", "dataCriacao",
+                ],
+                "properties": {
+                    "livroId": {"bsonType": "objectId"},
+                    "modalidadeDesejada": {"enum": TIPOS_MODALIDADE},
+                    "mensagem": {"bsonType": "string"},
+                    "status": {"enum": STATUS_INTERESSE},
+                    "dataCriacao": {"bsonType": "date"},
+                },
+            },
+        },
     },
 }
 
@@ -78,27 +96,14 @@ SCHEMA_LIVROS = {
     },
 }
 
-SCHEMA_INTERESSES = {
-    "bsonType": "object",
-    "required": [
-        "livroId", "usuarioInteressadoId", "modalidadeDesejada",
-        "status", "dataCriacao",
-    ],
-    "properties": {
-        "livroId": {"bsonType": "objectId"},
-        "usuarioInteressadoId": {"bsonType": "objectId"},
-        "modalidadeDesejada": {"enum": TIPOS_MODALIDADE},
-        "mensagem": {"bsonType": "string"},
-        "status": {"enum": STATUS_INTERESSE},
-        "dataCriacao": {"bsonType": "date"},
-    },
-}
-
 COLECOES = {
     "usuarios": SCHEMA_USUARIOS,
     "livros": SCHEMA_LIVROS,
-    "interesses": SCHEMA_INTERESSES,
 }
+
+# Coleção da primeira versão do projeto, que não existe mais (os interesses
+# agora ficam dentro de "usuarios"). É removida no --reset.
+COLECAO_ANTIGA = "interesses"
 
 
 # --------------------------------------------------------------------------
@@ -141,16 +146,10 @@ def criar_indices(db):
     )
     db.livros.create_index([("proprietarioId", ASCENDING)], name="proprietario")
 
-    # Interesses por livro e por usuário; um usuário não repete o mesmo
-    # interesse (mesmo livro e mesma modalidade).
-    db.interesses.create_index([("livroId", ASCENDING)], name="livro")
-    db.interesses.create_index(
-        [("usuarioInteressadoId", ASCENDING)], name="usuario_interessado"
-    )
-    db.interesses.create_index(
-        [("livroId", ASCENDING), ("usuarioInteressadoId", ASCENDING),
-         ("modalidadeDesejada", ASCENDING)],
-        unique=True, name="uniq_interesse",
+    # Descobrir quem se interessou por um livro (busca dentro do array
+    # embutido "interesses" dos usuários)
+    db.usuarios.create_index(
+        [("interesses.livroId", ASCENDING)], name="interesses_livro"
     )
     print("  índices criados")
 
@@ -237,30 +236,42 @@ def popular_livros(db, agora, u):
 
 
 def popular_interesses(db, agora, u, l):
-    if u is None or l is None or db.interesses.count_documents({}) > 0:
-        print("  'interesses' não populada (já possui documentos ou sem dados novos)")
+    """Embute os interesses dentro dos documentos dos usuários."""
+    if u is None or l is None:
+        print("  interesses não inseridos (usuários/livros já existiam)")
         return
     ana, carlos, marina, joao = u
     dom_casmurro, hobbit, capitaes, sapiens, codigo, hora_estrela = l
-    docs = [
-        {"livroId": hobbit, "usuarioInteressadoId": carlos,
-         "modalidadeDesejada": "emprestimo",
-         "mensagem": "Gostaria de ler durante as férias!",
-         "status": "aceito", "dataCriacao": agora - timedelta(days=6)},
-        {"livroId": dom_casmurro, "usuarioInteressadoId": marina,
-         "modalidadeDesejada": "venda",
-         "mensagem": "Ainda está disponível?",
-         "status": "pendente", "dataCriacao": agora - timedelta(days=3)},
-        {"livroId": sapiens, "usuarioInteressadoId": joao,
-         "modalidadeDesejada": "troca",
-         "mensagem": "Posso oferecer A Hora da Estrela em troca.",
-         "status": "pendente", "dataCriacao": agora - timedelta(days=2)},
-        {"livroId": codigo, "usuarioInteressadoId": ana,
-         "modalidadeDesejada": "venda",
-         "status": "recusado", "dataCriacao": agora - timedelta(days=1)},
-    ]
-    ids = db.interesses.insert_many(docs).inserted_ids
-    print(f"  {len(ids)} interesses inseridos")
+    interesses_por_usuario = {
+        carlos: [
+            {"livroId": hobbit, "modalidadeDesejada": "emprestimo",
+             "mensagem": "Gostaria de ler durante as férias!",
+             "status": "aceito", "dataCriacao": agora - timedelta(days=6)},
+            {"livroId": hora_estrela, "modalidadeDesejada": "emprestimo",
+             "status": "pendente", "dataCriacao": agora - timedelta(days=1)},
+        ],
+        marina: [
+            {"livroId": dom_casmurro, "modalidadeDesejada": "venda",
+             "mensagem": "Ainda está disponível?",
+             "status": "pendente", "dataCriacao": agora - timedelta(days=3)},
+        ],
+        joao: [
+            {"livroId": sapiens, "modalidadeDesejada": "troca",
+             "mensagem": "Posso oferecer A Hora da Estrela em troca.",
+             "status": "pendente", "dataCriacao": agora - timedelta(days=2)},
+        ],
+        ana: [
+            {"livroId": codigo, "modalidadeDesejada": "venda",
+             "status": "recusado", "dataCriacao": agora - timedelta(days=1)},
+        ],
+    }
+    total = 0
+    for usuario_id, interesses in interesses_por_usuario.items():
+        db.usuarios.update_one(
+            {"_id": usuario_id}, {"$set": {"interesses": interesses}}
+        )
+        total += len(interesses)
+    print(f"  {total} interesses embutidos nos usuários")
 
 
 # --------------------------------------------------------------------------
@@ -276,8 +287,12 @@ def main():
 
         if args.reset:
             print("Removendo coleções existentes...")
-            for nome in COLECOES:
+            for nome in list(COLECOES) + [COLECAO_ANTIGA]:
                 db.drop_collection(nome)
+
+        if COLECAO_ANTIGA in db.list_collection_names():
+            print(f"Aviso: existe a coleção antiga '{COLECAO_ANTIGA}'. "
+                  "Rode com --reset para removê-la e recriar tudo.")
 
         print(f"Criando banco '{NOME_BANCO}' e coleções...")
         for nome, schema in COLECOES.items():
@@ -293,6 +308,8 @@ def main():
         print("\nResumo:")
         for nome in COLECOES:
             print(f"  {nome}: {db[nome].count_documents({})} documento(s)")
+        com_interesse = db.usuarios.count_documents({"interesses.0": {"$exists": True}})
+        print(f"  (usuários com interesses embutidos: {com_interesse})")
     except PyMongoError as erro:
         sys.exit(f"Erro do MongoDB: {erro}")
 
