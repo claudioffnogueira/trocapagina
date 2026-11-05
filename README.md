@@ -12,7 +12,8 @@ troca, venda ou empréstimo.
 
 **Como funciona:** o usuário cadastra um livro, informa seu estado de
 conservação e escolhe como deseja disponibilizá-lo (uma ou mais modalidades).
-Outros usuários podem encontrar o livro e demonstrar interesse.
+Outros usuários podem encontrar o livro e demonstrar interesse; cada interesse
+fica registrado dentro do próprio usuário interessado.
 
 **Objetivo:** facilitar o acesso a livros usados, incentivar a leitura e dar
 novas oportunidades aos livros que estão parados.
@@ -21,31 +22,38 @@ novas oportunidades aos livros que estão parados.
 
 | Entidade | Papel no sistema |
 |---|---|
-| **Usuário** | Pessoa cadastrada, que pode anunciar livros e demonstrar interesse em livros de outros. |
+| **Usuário** | Pessoa cadastrada, que pode anunciar livros e demonstrar interesse em livros de outros. Os interesses ficam embutidos no documento do usuário. |
 | **Livro** | Exemplar anunciado por um usuário, com estado de conservação, modalidades (troca/venda/empréstimo) e status. |
-| **Interesse** | Manifestação de interesse de um usuário em um livro, para uma modalidade específica. |
+| **Interesse** | Manifestação de interesse de um usuário em um livro, para uma modalidade específica. Não é coleção: é um array dentro de `usuarios`. |
 
 ## 2. Banco de dados (MongoDB Atlas)
 
 - **Banco:** `trocapagina`
-- **Coleções:** `usuarios`, `livros`, `interesses`
+- **Coleções:** `usuarios` (com os interesses embutidos) e `livros`
 
 ### Decisões de modelagem
 
 - **Modalidades embutidas no livro.** Um livro pode ser ofertado de mais de um
   jeito (ex.: troca *e* venda). Como as modalidades só fazem sentido dentro do
   livro e são sempre lidas junto com ele, ficam embutidas (array `modalidades`).
-- **Referências para usuários.** `livros.proprietarioId` e
-  `interesses.usuarioInteressadoId` referenciam `usuarios._id`; `interesses.livroId`
-  referencia `livros._id`. Usuários e livros mudam de forma independente, então
-  não são duplicados dentro de outros documentos.
-- **Interesses em coleção própria.** Um livro popular pode receber muitos
-  interesses; manter em coleção separada evita documentos que crescem sem limite.
-- **Validação de esquema** (`$jsonSchema`) em todas as coleções: o próprio banco
-  rejeita documentos fora do formato (ex.: estado de conservação inválido).
-- **Índices:** e-mail único em `usuarios`; busca textual por título/autor e
-  filtro por status/gênero em `livros`; e um interesse único por
-  (livro, usuário, modalidade) em `interesses`.
+- **Interesses embutidos no usuário.** O interesse pertence a quem o demonstrou
+  e é sempre lido junto com o usuário ("quais livros esse usuário quer?"). A
+  lista de interesses de uma pessoa é pequena, então fica embutida (array
+  `interesses` em `usuarios`), sem precisar de uma coleção separada nem de junção.
+  Cada interesse guarda só a referência `livroId` ao livro desejado.
+- **Referências entre usuários e livros.** `livros.proprietarioId` referencia
+  `usuarios._id`, e `usuarios.interesses[].livroId` referencia `livros._id`.
+  Usuários e livros mudam de forma independente, então não são duplicados um
+  dentro do outro.
+- **Validação de esquema** (`$jsonSchema`) nas duas coleções: o próprio banco
+  rejeita documentos fora do formato (ex.: estado de conservação inválido,
+  status de interesse inválido).
+- **Índices:** e-mail único em `usuarios`; índice em `interesses.livroId` para
+  descobrir quem se interessou por um livro; busca textual por título/autor e
+  filtro por status/gênero em `livros`.
+- **Trade-off conhecido.** Como os interesses ficam dentro dos usuários, a regra
+  "um usuário não repete o mesmo interesse (mesmo livro e modalidade)" deve ser
+  garantida pela aplicação, e não por um índice único do banco.
 
 ### Valores aceitos
 
@@ -54,20 +62,36 @@ novas oportunidades aos livros que estão parados.
 | `livros.estadoConservacao` | `novo`, `ótimo`, `bom`, `regular`, `desgastado` |
 | `livros.status` | `disponivel`, `reservado`, `indisponivel` |
 | `livros.modalidades[].tipo` | `troca`, `venda`, `emprestimo` |
-| `interesses.status` | `pendente`, `aceito`, `recusado` |
+| `usuarios.interesses[].status` | `pendente`, `aceito`, `recusado` |
+| `usuarios.interesses[].modalidadeDesejada` | `troca`, `venda`, `emprestimo` |
 
 ### Exemplos de documentos
 
-**`usuarios`**
+**`usuarios`** (com os interesses embutidos)
 ```json
 {
   "_id": { "$oid": "..." },
-  "nome": "Ana Beatriz Lima",
-  "email": "ana.lima@example.com",
+  "nome": "Carlos Eduardo Souza",
+  "email": "carlos.souza@example.com",
   "cidade": "Uberlândia",
   "estado": "MG",
-  "dataCadastro": { "$date": "2026-08-05T12:00:00Z" },
-  "ativo": true
+  "dataCadastro": { "$date": "2026-09-05T12:00:00Z" },
+  "ativo": true,
+  "interesses": [
+    {
+      "livroId": { "$oid": "<_id de livros>" },
+      "modalidadeDesejada": "emprestimo",
+      "mensagem": "Gostaria de ler durante as férias!",
+      "status": "aceito",
+      "dataCriacao": { "$date": "2026-10-30T12:00:00Z" }
+    },
+    {
+      "livroId": { "$oid": "<_id de livros>" },
+      "modalidadeDesejada": "emprestimo",
+      "status": "pendente",
+      "dataCriacao": { "$date": "2026-11-04T12:00:00Z" }
+    }
+  ]
 }
 ```
 
@@ -91,21 +115,8 @@ novas oportunidades aos livros que estão parados.
 }
 ```
 
-**`interesses`**
-```json
-{
-  "_id": { "$oid": "..." },
-  "livroId": { "$oid": "<_id de livros>" },
-  "usuarioInteressadoId": { "$oid": "<_id de usuarios>" },
-  "modalidadeDesejada": "emprestimo",
-  "mensagem": "Gostaria de ler durante as férias!",
-  "status": "aceito",
-  "dataCriacao": { "$date": "2026-10-28T12:00:00Z" }
-}
-```
-
-O script `scripts/criar_banco.py` insere 4 usuários, 6 livros e 4 interesses
-fictícios (veja o código para todos os exemplos).
+O script `scripts/criar_banco.py` insere 4 usuários, 6 livros e 5 interesses
+fictícios (embutidos nos usuários). Veja o código para todos os exemplos.
 
 ## 3. Como executar
 
@@ -123,12 +134,13 @@ cp .env.example .env
 # 3. Criar o banco, as coleções, os índices e os documentos de exemplo
 python scripts/criar_banco.py
 
-# (opcional) apagar as 3 coleções e recriar tudo do zero
+# (opcional) apagar as coleções e recriar tudo do zero
 python scripts/criar_banco.py --reset
 ```
 
 O script pode ser executado mais de uma vez: coleções existentes têm só a
-validação atualizada e os exemplos só são inseridos em coleções vazias.
+validação atualizada e os exemplos só são inseridos em coleções vazias. Se
+existir a coleção antiga `interesses` (versão anterior do projeto), use `--reset`.
 
 ## 4. Estrutura do repositório
 
