@@ -1,8 +1,0 @@
-[
-  { "$match": { "status": "disponivel", "modalidades.tipo": "troca" } },
-  { "$lookup": { "from": "usuarios", "localField": "proprietarioId", "foreignField": "_id", "as": "dono" } },
-  { "$unwind": "$dono" },
-  { "$match": { "dono.cidade": "Uberlândia" } },
-  { "$project": { "_id": 0, "titulo": 1, "autor": 1, "genero": 1, "estadoConservacao": 1, "modalidades": 1, "dono": "$dono.nome", "cidade": "$dono.cidade" } },
-  { "$sort": { "titulo": 1 } }
-]
