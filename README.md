@@ -18,13 +18,6 @@ fica registrado dentro do próprio usuário interessado.
 **Objetivo:** facilitar o acesso a livros usados, incentivar a leitura e dar
 novas oportunidades aos livros que estão parados.
 
-### Principais entidades
-
-| Entidade | Papel no sistema |
-|---|---|
-| **Usuário** | Pessoa cadastrada, que pode anunciar livros e demonstrar interesse em livros de outros. Os interesses ficam embutidos no documento do usuário. |
-| **Livro** | Exemplar anunciado por um usuário, com estado de conservação, modalidades (troca/venda/empréstimo) e status. |
-| **Interesse** | Manifestação de interesse de um usuário em um livro, para uma modalidade específica. Não é coleção: é um array dentro de `usuarios`. |
 
 ## 2. Banco de dados (MongoDB Atlas)
 
@@ -118,7 +111,56 @@ novas oportunidades aos livros que estão parados.
 O script `scripts/criar_banco.py` insere 4 usuários, 6 livros e 5 interesses
 fictícios (embutidos nos usuários). Veja o código para todos os exemplos.
 
-## 3. Como executar
+## 3. Consultas (pipelines de agregação)
+
+Duas funcionalidades foram implementadas como pipelines de agregação. Cada uma
+existe em dois formatos: em Python (`scripts/consultas.py`) e em JSON
+(`pipelines/`), para colar direto na aba **Aggregations** do Atlas.
+
+### Funcionalidade 1 - Livros parados
+
+Lista os livros **disponíveis que nunca receberam interesse**, com o nome e a
+cidade do dono e há quantos dias estão anunciados. Ajuda o dono a rever
+descrição ou preço.
+
+- **Parte de:** `livros`
+- **Arquivo:** `pipelines/livros_parados.json`
+
+| Stage | O que faz |
+|---|---|
+| `$match` | mantém só livros com `status: "disponivel"` |
+| `$lookup` | procura em `usuarios` quem tem `interesses.livroId` igual ao livro |
+| `$match` | fica só com quem tem a lista de interessados vazia (`$size: 0`) |
+| `$lookup` + `$unwind` | traz o dono do livro |
+| `$addFields` | calcula `diasAnunciado` a partir de `dataCadastro` e `$$NOW` |
+| `$project` | formata a saída |
+| `$sort` | os anúncios mais antigos primeiro |
+
+Com os dados de exemplo, o resultado é *Capitães da Areia*, único livro
+disponível que ninguém demonstrou interesse.
+
+### Funcionalidade 2 - Catálogo com filtros
+
+Lista os livros disponíveis filtrados por **cidade do dono**, **gênero** e
+**modalidade** (`troca`, `venda` ou `emprestimo`). Todos os filtros são
+opcionais.
+
+- **Parte de:** `livros`
+- **Arquivo:** `pipelines/catalogo_filtros.json` (exemplo: cidade Uberlândia, modalidade troca)
+
+| Stage | O que faz |
+|---|---|
+| `$match` | filtros do próprio livro (status, gênero, modalidade), antes do `$lookup` para ser mais eficiente |
+| `$lookup` + `$unwind` | traz o dono do livro |
+| `$match` | filtra pela cidade do dono (só existe depois do `$lookup`) |
+| `$project` | formata a saída |
+| `$sort` | ordem alfabética por título |
+
+Com os dados de exemplo, o filtro Uberlândia + troca devolve *Dom Casmurro* e
+*Sapiens*.
+
+
+## 4. Como executar
 
 Pré-requisitos: Python 3.9+ e um cluster no [MongoDB Atlas](https://www.mongodb.com/atlas)
 (o IP da sua máquina precisa estar liberado em *Network Access*).
@@ -136,13 +178,16 @@ python scripts/criar_banco.py
 
 # (opcional) apagar as coleções e recriar tudo do zero
 python scripts/criar_banco.py --reset
+
+# 4. Rodar as consultas (livros parados e catálogo com filtros)
+python scripts/consultas.py
 ```
 
 O script pode ser executado mais de uma vez: coleções existentes têm só a
 validação atualizada e os exemplos só são inseridos em coleções vazias. Se
 existir a coleção antiga `interesses` (versão anterior do projeto), use `--reset`.
 
-## 4. Estrutura do repositório
+## 5. Estrutura do repositório
 
 ```
 trocapagina/
@@ -150,11 +195,15 @@ trocapagina/
 ├── requirements.txt       # dependências Python
 ├── .env.example           # modelo do arquivo de configuração
 ├── .gitignore             # ignora o .env (credenciais)
+├── pipelines/
+│   ├── livros_parados.json    # pipeline "Livros parados" (colar no Atlas)
+│   └── catalogo_filtros.json  # pipeline "Catálogo com filtros" (colar no Atlas)
 └── scripts/
-    └── criar_banco.py     # cria banco, coleções, índices e exemplos
+    ├── criar_banco.py     # cria banco, coleções, índices e exemplos
+    └── consultas.py       # executa as duas consultas em Python
 ```
 
-## 5. Segurança
+## 6. Segurança
 
 A URI de conexão (com usuário e senha) fica **apenas** no arquivo `.env`, que
 está no `.gitignore`. Nunca coloque a senha diretamente no código nem em commits.
