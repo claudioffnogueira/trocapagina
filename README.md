@@ -29,9 +29,9 @@ novas oportunidades aos livros que estão parados.
 
 | Tecnologia | Uso |
 |---|---|
-| **MongoDB Atlas** | Banco principal: usuários, livros e interesses. |
+| **MongoDB Atlas** | Banco principal: usuários, livros, interesses embutidos e consultas de agregação. |
 | **Redis Cloud** | Cache de sessão, limite de tentativas de login e estruturas probabilísticas (Bloom Filter, HyperLogLog, Count-Min Sketch, Top-K). |
-| **Python 3.9+** | Scripts de criação do banco e demonstração do Redis (`pymongo`, `redis`, `python-dotenv`). |
+| **Python 3.9+** | Scripts de criação do banco, execução de pipelines e demonstração do Redis (`pymongo`, `redis`, `python-dotenv`). |
 
 ## 2. Banco de dados (MongoDB Atlas)
 
@@ -126,7 +126,8 @@ fictícios (veja o código para todos os exemplos).
 ### Consultas de agregação (`pipelines/`)
 
 Os pipelines estão em JSON e podem ser colados na aba **Aggregations** do
-MongoDB Compass / Atlas (ou executados com `db.<coleção>.aggregate([...])`).
+MongoDB Compass / Atlas, executados com `db.<coleção>.aggregate([...])` ou
+rodados diretamente pelo script `scripts/executar_pipelines.py`.
 Ambos devem ser executados na coleção **`livros`**.
 
 | Arquivo | O que faz |
@@ -184,7 +185,13 @@ python scripts/criar_banco.py
 # (opcional) apagar as coleções e recriar tudo do zero
 python scripts/criar_banco.py --reset
 
-# 4. Demonstração do Redis
+# 4. Executar os pipelines de agregação no MongoDB
+python scripts/executar_pipelines.py
+
+# (opcional) testar filtros dinâmicos no catálogo
+python scripts/executar_pipelines.py --cidade "Uberlândia" --modalidade troca --genero Romance
+
+# 5. Demonstração do Redis
 python scripts/redis_cache.py
 ```
 
@@ -219,6 +226,7 @@ trocapagina/
 ├── .gitignore                     # ignora o .env (credenciais)
 ├── scripts/
 │   ├── criar_banco.py             # cria banco, coleções, índices e exemplos (MongoDB)
+│   ├── executar_pipelines.py      # executa os pipelines de agregação (MongoDB)
 │   └── redis_cache.py             # demonstração de cache e estruturas do Redis
 ├── pipelines/
 │   ├── catalogo_filtros.json      # livros para troca na cidade do dono
@@ -236,3 +244,4 @@ credencial for exposta, troque-a imediatamente no painel do Atlas ou do Redis
 Cloud.
 
 Todos os dados de exemplo são fictícios.
+```
