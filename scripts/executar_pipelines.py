@@ -3,18 +3,12 @@ TrocaPágina - execução dos pipelines de agregação no MongoDB Atlas.
 
 Lê os arquivos JSON da pasta "pipelines/" e executa as consultas de agregação
 na coleção "livros":
-  1. pipelines/catalogo_filtros.json -> livros disponíveis para troca por cidade
+  1. pipelines/catalogo_filtros.json -> livros disponíveis para troca em Uberlândia
   2. pipelines/livros_parados.json   -> livros disponíveis sem nenhum interesse
 
 Uso:
     python scripts/executar_pipelines.py
-    python scripts/executar_pipelines.py --cidade "Uberlândia" --modalidade troca
-    python scripts/executar_pipelines.py --genero Romance
 """
-from __future__ import annotations
-
-import argparse
-import copy
 import json
 import os
 import sys
@@ -42,52 +36,20 @@ def conectar():
     return cliente
 
 
-def carregar_pipeline(nome_arquivo: str) -> list[dict]:
-    """Carrega um pipeline de agregação a partir da pasta pipelines/."""
+def executar_pipeline(db, nome_arquivo: str) -> list[dict]:
+    """Lê um arquivo JSON de pipeline e executa a agregação na coleção 'livros'."""
     caminho = PASTA_PIPELINES / nome_arquivo
     if not caminho.exists():
         sys.exit(f"Erro: arquivo de pipeline não encontrado: {caminho}")
     with open(caminho, "r", encoding="utf-8") as arquivo:
-        return json.load(arquivo)
-
-
-def consultar_catalogo_filtros(
-    db,
-    cidade: str | None = None,
-    modalidade: str | None = None,
-    genero: str | None = None,
-) -> list[dict]:
-    """
-    Executa pipelines/catalogo_filtros.json na coleção 'livros'.
-    Se cidade, modalidade ou genero forem informados, ajusta os stages $match
-    dinamicamente mantendo o restante do pipeline original.
-    """
-    pipeline = copy.deepcopy(carregar_pipeline("catalogo_filtros.json"))
-
-    # Stage 0: $match inicial na coleção 'livros'
-    match_livro = pipeline[0]["$match"]
-    if modalidade:
-        match_livro["modalidades.tipo"] = modalidade
-    if genero:
-        match_livro["genero"] = genero
-
-    # Stage 3: $match após o $lookup/$unwind do proprietário ('dono')
-    if cidade:
-        pipeline[3]["$match"]["dono.cidade"] = cidade
-
-    return list(db[COLECAO_ALVO].aggregate(pipeline))
-
-
-def consultar_livros_parados(db) -> list[dict]:
-    """Executa pipelines/livros_parados.json na coleção 'livros'."""
-    pipeline = carregar_pipeline("livros_parados.json")
+        pipeline = json.load(arquivo)
     return list(db[COLECAO_ALVO].aggregate(pipeline))
 
 
 def exibir_catalogo(resultados: list[dict]) -> None:
     print("=== 1) Catálogo com Filtros ===")
     if not resultados:
-        print("  Nenhum livro encontrado para os filtros informados.\n")
+        print("  Nenhum livro encontrado.\n")
         return
 
     for livro in resultados:
@@ -118,37 +80,14 @@ def exibir_livros_parados(resultados: list[dict]) -> None:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Executa os pipelines de agregação do TrocaPágina."
-    )
-    parser.add_argument(
-        "--cidade",
-        help="Sobrescreve a cidade do proprietário no filtro (padrão do JSON: Uberlândia)",
-    )
-    parser.add_argument(
-        "--modalidade",
-        choices=["troca", "venda", "emprestimo"],
-        help="Sobrescreve a modalidade desejada (padrão do JSON: troca)",
-    )
-    parser.add_argument(
-        "--genero",
-        help="Adiciona filtro opcional por gênero literário (ex.: Romance, História)",
-    )
-    args = parser.parse_args()
-
     try:
         cliente = conectar()
         db = cliente[NOME_BANCO]
 
-        catalogo = consultar_catalogo_filtros(
-            db,
-            cidade=args.cidade,
-            modalidade=args.modalidade,
-            genero=args.genero,
-        )
+        catalogo = executar_pipeline(db, "catalogo_filtros.json")
         exibir_catalogo(catalogo)
 
-        parados = consultar_livros_parados(db)
+        parados = executar_pipeline(db, "livros_parados.json")
         exibir_livros_parados(parados)
 
         cliente.close()
