@@ -188,9 +188,6 @@ python scripts/criar_banco.py --reset
 # 4. Executar os pipelines de agregação no MongoDB
 python scripts/executar_pipelines.py
 
-# (opcional) testar filtros dinâmicos no catálogo
-python scripts/executar_pipelines.py --cidade "Uberlândia" --modalidade troca --genero Romance
-
 # 5. Demonstração do Redis
 python scripts/redis_cache.py
 ```
